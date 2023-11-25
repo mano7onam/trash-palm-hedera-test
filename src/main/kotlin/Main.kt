@@ -14,7 +14,11 @@ fun main() {
     val client = Client.forTestnet()
     client.setOperator(myAccountId, myPrivateKey)
 
+    testAll(client)
+//    makeNftsForChallenge(15, client, "Mega challenge", "MCH")
+}
 
+fun testAll(client: Client) {
     // Treasury Key
     val treasuryKey = PrivateKey.generateED25519()
     val treasuryPublicKey = treasuryKey.publicKey
@@ -217,5 +221,60 @@ fun makeTransferNft(client: Client, tokenId: TokenId, sender: AccountInfo, recei
     val tokenTransferRx: TransactionReceipt = tokenTransferSubmit.getReceipt(client)
 
     println("NFT transfer from sender to receiver: " + tokenTransferRx.status)
+}
+
+fun makeNftsForChallenge(numberOfChallengers: Int, client: Client, challengeName: String, challengeSymbol: String): AccountInfo {
+    val accountInfo: AccountInfo? = createNewAccount(client)
+    if (accountInfo == null) {
+        throw RuntimeException("Failed to create new account")
+    }
+    val supplyKey = PrivateKey.generateED25519()
+    val supplyPublicKey = supplyKey.publicKey
+
+    val treasuryId = accountInfo.accountId
+    val nftCreate = TokenCreateTransaction()
+        .setTokenName("Challenge $challengeName NFT")
+        .setTokenSymbol(challengeSymbol)
+        .setTokenType(TokenType.NON_FUNGIBLE_UNIQUE)
+        .setDecimals(0)
+        .setInitialSupply(0)
+        .setTreasuryAccountId(treasuryId)
+        .setSupplyType(TokenSupplyType.FINITE)
+        .setMaxSupply(250)
+        .setSupplyKey(supplyKey)
+        .freezeWith(client)
+
+    // Sign the transaction with the treasury key
+    val nftCreateTxSign = nftCreate.sign(accountInfo.key)
+    // Submit the transaction to a Hedera network
+    val nftCreateSubmit = nftCreateTxSign.execute(client)
+    // Get the transaction receipt
+    val nftCreateRx = nftCreateSubmit.getReceipt(client)
+    // Get the token ID
+    val tokenId = nftCreateRx.tokenId
+    // Log the token ID
+    println("Created NFT with token ID $tokenId")
+
+    // Mint a new NFT
+    // Max transaction fee as a constant
+    val MAX_TRANSACTION_FEE = 20
+    var mintTx = TokenMintTransaction()
+        .setTokenId(tokenId)
+        .setMaxTransactionFee(Hbar(MAX_TRANSACTION_FEE.toLong()))
+    for (i in 1..numberOfChallengers) {
+        mintTx.addMetadata("$challengeName $i".toByteArray())
+    }
+    mintTx = mintTx.freezeWith(client)
+
+    // Sign transaction with the supply key
+    val mintTxSign = mintTx.sign(supplyKey)
+    // Submit the transaction to a Hedera network
+    val mintTxSubmit = mintTxSign.execute(client)
+    // Get the transaction receipt
+    val mintRx = mintTxSubmit.getReceipt(client)
+
+    // Log the serial number
+    println("Created NFT " + tokenId + " with serial: " + mintRx.serials)
+    return accountInfo
 }
 
