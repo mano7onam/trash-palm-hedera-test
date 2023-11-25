@@ -15,7 +15,18 @@ fun main() {
     client.setOperator(myAccountId, myPrivateKey)
 
 //    testAll(client)
-    makeNftsForChallenge(15, client, "Mega challenge", "MCH")
+    testChallenge(client)
+}
+
+fun testChallenge(client: Client) {
+    val challengers = 15
+    val treasuryNftInfo = makeNftsForChallenge(challengers, client, "Mega challenge", "MCH") ?: return
+    for (i in 1 .. challengers) {
+        val newAccount = createNewAccount(client) ?: continue
+        transferNftToAccount(client, treasuryNftInfo.treasuryAccountInfo, newAccount, treasuryNftInfo.tokenId, i.toLong())
+        println("-------------------------")
+        println()
+    }
 }
 
 fun testAll(client: Client) {
@@ -223,7 +234,14 @@ fun makeTransferNft(client: Client, tokenId: TokenId, sender: AccountInfo, recei
     println("NFT transfer from sender to receiver: " + tokenTransferRx.status)
 }
 
-fun makeNftsForChallenge(numberOfChallengers: Int, client: Client, challengeName: String, challengeSymbol: String): AccountInfo? {
+data class NftTreasuryInfo(val tokenId: TokenId, val treasuryAccountInfo: AccountInfo)
+
+fun makeNftsForChallenge(
+    numberOfChallengers: Int,
+    client: Client,
+    challengeName: String,
+    challengeSymbol: String
+): NftTreasuryInfo {
     val accountInfo: AccountInfo? = createNewAccount(client)
     if (accountInfo == null) {
         throw RuntimeException("Failed to create new account")
@@ -282,8 +300,7 @@ fun makeNftsForChallenge(numberOfChallengers: Int, client: Client, challengeName
                 val mintRx = mintTxSubmit.getReceipt(client)
                 println("Created NFT " + tokenId + " with serial: " + mintRx.serials)
                 return batchNftsCounter
-            }
-            catch (ex: PrecheckStatusException) {
+            } catch (ex: PrecheckStatusException) {
                 if (ex.status == Status.BUSY) {
                     retries++;
                     println("Retry attempt: " + retries);
@@ -300,6 +317,76 @@ fun makeNftsForChallenge(numberOfChallengers: Int, client: Client, challengeName
         nftsCounter = mintBatchOfNfts(nftsCounter)
     }
 
-    return accountInfo
+    return NftTreasuryInfo(tokenId, accountInfo)
+}
+
+fun transferNftToAccount(
+    client: Client,
+    treasuryAccountInfo: AccountInfo,
+    receiverAccountInfo: AccountInfo,
+    tokenId: TokenId,
+    serial: Long
+) {
+    val receiverAccountId: AccountId = receiverAccountInfo.accountId
+    val receiverKey: PrivateKey = receiverAccountInfo.key
+
+    val treasuryId = treasuryAccountInfo.accountId
+    val treasuryKey = treasuryAccountInfo.key
+
+    // Create the associate transaction and sign with Alice's key
+    val associateAliceTx = TokenAssociateTransaction()
+        .setAccountId(receiverAccountId)
+        .setTokenIds(listOf(tokenId))
+        .freezeWith(client)
+        .sign(receiverKey)
+
+
+    // Submit the transaction to a Hedera network
+    val associateAliceTxSubmit = associateAliceTx.execute(client)
+
+
+    // Get the transaction receipt
+    val associateAliceRx = associateAliceTxSubmit.getReceipt(client)
+
+
+    // Confirm the transaction was successful
+    println("NFT association with Alice's account: " + associateAliceRx.status)
+
+
+    // Check the balance before the NFT transfer for the treasury account
+    val balanceCheckTreasury = AccountBalanceQuery().setAccountId(treasuryId)
+        .execute(client)
+    println("Treasury balance: " + balanceCheckTreasury.tokens + "NFTs of ID " + tokenId)
+
+
+    // Check the balance before the NFT transfer for Alice's account
+    val balanceCheckAlice = AccountBalanceQuery().setAccountId(receiverAccountId)
+        .execute(client)
+    println("Alice's balance: " + balanceCheckAlice.tokens + "NFTs of ID " + tokenId)
+
+
+    // Transfer NFT from treasury to Alice
+    // Sign with the treasury key to authorize the transfer
+    val tokenTransferTx = TransferTransaction()
+        .addNftTransfer(NftId(tokenId, serial), treasuryId, receiverAccountId)
+        .freezeWith(client)
+        .sign(treasuryKey)
+
+    val tokenTransferSubmit = tokenTransferTx.execute(client)
+    val tokenTransferRx = tokenTransferSubmit.getReceipt(client)
+
+    println("NFT transfer from Treasury to Alice: " + tokenTransferRx.status)
+
+
+    // Check the balance for the treasury account after the transfer
+    val balanceCheckTreasury2 = AccountBalanceQuery().setAccountId(treasuryId)
+        .execute(client)
+    println("Treasury balance: " + balanceCheckTreasury2.tokens + "NFTs of ID " + tokenId)
+
+
+    // Check the balance for Alice's account after the transfer
+    val balanceCheckAlice2 = AccountBalanceQuery().setAccountId(receiverAccountId)
+        .execute(client)
+    println("Alice's balance: " + balanceCheckAlice2.tokens + "NFTs of ID " + tokenId)
 }
 
