@@ -2,7 +2,6 @@ package org.example
 
 import com.hedera.hashgraph.sdk.*
 import io.github.cdimascio.dotenv.Dotenv
-import java.util.*
 import java.util.concurrent.TimeoutException
 
 fun main() {
@@ -184,16 +183,39 @@ fun main() {
     println("Alice's balance: " + balanceCheckAlice2.tokens + "NFTs of ID " + tokenId)
 }
 
+data class AccountInfo(val accountId: AccountId, val key: PrivateKey)
+
 @Throws(ReceiptStatusException::class, TimeoutException::class, PrecheckStatusException::class)
-fun createNewAccount(client: Client) {
-    val aliceKey = PrivateKey.generate()
-    val aliceAccount = AccountCreateTransaction()
-        .setKey(aliceKey.publicKey)
-        .setInitialBalance(Hbar(10))
+fun createNewAccount(client: Client, initialBalance: Long = 10): AccountInfo? {
+    val accountPrivateKey = PrivateKey.generateED25519()
+    val account = AccountCreateTransaction()
+        .setKey(accountPrivateKey.publicKey)
+        .setInitialBalance(Hbar(initialBalance))
         .execute(client)
 
-    val aliceAccountId = aliceAccount.getReceipt(client).accountId
+    val accountId = account.getReceipt(client).accountId
+    println("New account created with ID $accountId")
 
-    println("Alice account created with ID $aliceAccountId")
+    if (accountId == null) return null
+    return AccountInfo(accountId, accountPrivateKey)
+}
+
+fun getAccountInfo(accountId: String, privateKey: String): AccountInfo {
+    return AccountInfo(
+        AccountId.fromString("0.0.1234"),
+        PrivateKey.fromString("302e020100300506032b6570042204208f5019c14c45d91786c6f9a4a1ae2b3b592239eac006deb8a4b8f15a50ca874c")
+    )
+}
+
+fun makeTransferNft(client: Client, tokenId: TokenId, sender: AccountInfo, receiver: AccountInfo) {
+    val tokenTransferTx: TransferTransaction = TransferTransaction()
+        .addNftTransfer(NftId(tokenId, 1), sender.accountId, receiver.accountId)
+        .freezeWith(client)
+        .sign(sender.key)
+
+    val tokenTransferSubmit: TransactionResponse = tokenTransferTx.execute(client)
+    val tokenTransferRx: TransactionReceipt = tokenTransferSubmit.getReceipt(client)
+
+    println("NFT transfer from sender to receiver: " + tokenTransferRx.status)
 }
 
