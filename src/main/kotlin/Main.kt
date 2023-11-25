@@ -14,8 +14,8 @@ fun main() {
     val client = Client.forTestnet()
     client.setOperator(myAccountId, myPrivateKey)
 
-    testAll(client)
-//    makeNftsForChallenge(15, client, "Mega challenge", "MCH")
+//    testAll(client)
+    makeNftsForChallenge(15, client, "Mega challenge", "MCH")
 }
 
 fun testAll(client: Client) {
@@ -223,7 +223,7 @@ fun makeTransferNft(client: Client, tokenId: TokenId, sender: AccountInfo, recei
     println("NFT transfer from sender to receiver: " + tokenTransferRx.status)
 }
 
-fun makeNftsForChallenge(numberOfChallengers: Int, client: Client, challengeName: String, challengeSymbol: String): AccountInfo {
+fun makeNftsForChallenge(numberOfChallengers: Int, client: Client, challengeName: String, challengeSymbol: String): AccountInfo? {
     val accountInfo: AccountInfo? = createNewAccount(client)
     if (accountInfo == null) {
         throw RuntimeException("Failed to create new account")
@@ -251,30 +251,55 @@ fun makeNftsForChallenge(numberOfChallengers: Int, client: Client, challengeName
     // Get the transaction receipt
     val nftCreateRx = nftCreateSubmit.getReceipt(client)
     // Get the token ID
-    val tokenId = nftCreateRx.tokenId
+    val tokenId = nftCreateRx.tokenId ?: throw RuntimeException("Failed to create token")
     // Log the token ID
     println("Created NFT with token ID $tokenId")
 
-    // Mint a new NFT
-    // Max transaction fee as a constant
-    val MAX_TRANSACTION_FEE = 20
-    var mintTx = TokenMintTransaction()
-        .setTokenId(tokenId)
-        .setMaxTransactionFee(Hbar(MAX_TRANSACTION_FEE.toLong()))
-    for (i in 1..numberOfChallengers) {
-        mintTx.addMetadata("$challengeName $i".toByteArray())
+    fun mintBatchOfNfts(curCounterValue: Int): Int {
+        val MAX_RETRIES = 5
+        var retries = 0
+        while (retries < MAX_RETRIES) {
+            try {
+                var batchNftsCounter = curCounterValue
+
+                val MAX_TRANSACTION_FEE = 20
+                var mintTx = TokenMintTransaction()
+                    .setTokenId(tokenId)
+                    .setMaxTransactionFee(Hbar(MAX_TRANSACTION_FEE.toLong()))
+
+                for (i in 0 until 10) {
+                    batchNftsCounter++
+                    mintTx.addMetadata("$challengeName $batchNftsCounter".toByteArray())
+                    if (batchNftsCounter >= numberOfChallengers) {
+                        break
+                    }
+                }
+
+                mintTx = mintTx.freezeWith(client)
+
+                val mintTxSign = mintTx.sign(supplyKey)
+                val mintTxSubmit = mintTxSign.execute(client)
+                val mintRx = mintTxSubmit.getReceipt(client)
+                println("Created NFT " + tokenId + " with serial: " + mintRx.serials)
+                return batchNftsCounter
+            }
+            catch (ex: PrecheckStatusException) {
+                if (ex.status == Status.BUSY) {
+                    retries++;
+                    println("Retry attempt: " + retries);
+                } else {
+                    throw ex;
+                }
+            }
+        }
+        return curCounterValue
     }
-    mintTx = mintTx.freezeWith(client)
 
-    // Sign transaction with the supply key
-    val mintTxSign = mintTx.sign(supplyKey)
-    // Submit the transaction to a Hedera network
-    val mintTxSubmit = mintTxSign.execute(client)
-    // Get the transaction receipt
-    val mintRx = mintTxSubmit.getReceipt(client)
+    var nftsCounter = 0
+    while (nftsCounter < numberOfChallengers) {
+        nftsCounter = mintBatchOfNfts(nftsCounter)
+    }
 
-    // Log the serial number
-    println("Created NFT " + tokenId + " with serial: " + mintRx.serials)
     return accountInfo
 }
 
